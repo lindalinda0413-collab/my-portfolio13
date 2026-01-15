@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real Earth 3D Dashboard</title>
+    <style>
+        /* --- 基礎設定 --- */
+        body { margin: 0; overflow: hidden; background-color: #020205; font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif; user-select: none; }
+        
+        /* 載入畫面 */
+        #loader {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #020205; z-index: 2000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            transition: opacity 0.5s; pointer-events: none;
+        }
+        .spinner { width: 50px; height: 50px; border: 3px solid #333; border-top: 3px solid #00aaff; border-radius: 50%; animation: spin 1s infinite linear; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .load-text { color: #00aaff; margin-top: 20px; font-size: 14px; letter-spacing: 2px; }
+
+        /* UI 層 */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+        /* --- 左側資訊卡 (可拖曳) --- */
+        #info-card {
+            position: absolute; top: 80px; left: 30px; width: 280px;
+            background: rgba(15, 20, 25, 0.95);
+            border-left: 4px solid #00aaff;
+            border-radius: 4px; pointer-events: auto;
+            opacity: 0; transform: scale(0.95);
+            transition: opacity 0.3s, transform 0.3s;
+            box-shadow: 5px 5px 20px rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+        }
+        #info-card.active { opacity: 1; transform: scale(1); }
+
+        /* 標題區 (拖曳把手) */
+        .card-head { 
+            padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); 
+            display: flex; justify-content: space-between; align-items: flex-start;
+            cursor: move; background: rgba(255,255,255,0.05);
+        }
+        .card-head:active { background: rgba(255,255,255,0.1); }
+
+        .c-name { font-size: 26px; font-weight: 800; color: #fff; margin: 0; pointer-events: none; }
+        .c-en { font-size: 13px; color: #00aaff; font-weight: bold; margin-top: 4px; pointer-events: none; }
+        
+        .close-btn { cursor: pointer; color: #888; font-size: 20px; padding: 0 5px; }
+        .close-btn:hover { color: #fff; }
+
+        .card-body { padding: 15px; cursor: default; }
+        .row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; border-bottom: 1px dashed #333; padding-bottom: 5px; }
+        .lbl { color: #aaa; font-size: 12px; }
+        .val { color: #eee; font-weight: 500; }
+
+        /* --- 右側列表容器 (可拖曳) --- */
+        #list-container {
+            position: absolute; top: 80px; left: auto; right: 30px; 
+            pointer-events: auto; display: flex; flex-direction: column; align-items: flex-end;
+            z-index: 1000; width: 240px; 
+        }
+
+        /* 藍色按鈕 (拖曳把手) */
+        #list-toggle-btn {
+            width: 100%; padding: 12px 0; 
+            background: rgba(0, 170, 255, 0.9); color: white;
+            border: none; border-radius: 30px; 
+            font-size: 14px; font-weight: bold; 
+            box-shadow: 0 4px 15px rgba(0, 170, 255, 0.4);
+            display: flex; justify-content: center; align-items: center; gap: 8px; 
+            cursor: move; /* 顯示可移動 */
+            user-select: none; transition: transform 0.1s;
+        }
+        #list-toggle-btn:active { transform: scale(0.98); background: #0088cc; }
+
+        /* 列表本體 */
+        #list-panel {
+            width: 100%; max-height: 60vh; 
+            background: rgba(20, 25, 30, 0.95);
+            border: 1px solid #444; border-top: 3px solid #00aaff;
+            display: flex; flex-direction: column;
+            border-radius: 4px; backdrop-filter: blur(10px);
+            transition: opacity 0.3s, transform 0.3s;
+            transform-origin: top center;
+            box-shadow: -5px 5px 20px rgba(0,0,0,0.6);
+            margin-top: 8px;
+        }
+        #list-panel.minimized {
+            opacity: 0; pointer-events: none; height: 0; overflow: hidden; transform: scaleY(0);
+        }
+
+        .list-header { padding: 10px; background: rgba(0,0,0,0.2); border-bottom: 1px solid #444; }
+        #search-input { width: 100%; padding: 8px 10px; background: #0a0c10; border: 1px solid #555; color: #fff; border-radius: 3px; outline: none; font-size: 13px; box-sizing: border-box; }
+        .list-content { flex: 1; overflow-y: auto; cursor: default; }
+        .list-content::-webkit-scrollbar { width: 4px; }
+        .list-content::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
+        
+        .list-item { padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
+        .list-item:hover { background: rgba(255,255,255,0.1); padding-left: 20px; }
+        .list-item.active { background: rgba(0, 170, 255, 0.15); border-left: 3px solid #00aaff; }
+        .li-zh { font-size: 14px; color: #ddd; font-weight: bold; }
+        .li-en { font-size: 11px; color: #666; text-transform: uppercase; } /* 顯示英文 */
+        .list-item.active .li-zh { color: #fff; }
+
+        .btn-reset { position: absolute; bottom: 30px; left: 30px; pointer-events: auto; padding: 10px 25px; background: rgba(0,0,0,0.8); border: 1px solid #666; color: #ddd; border-radius: 30px; cursor: pointer; font-size: 13px; }
+        .btn-reset:hover { background: #fff; color: #000; }
+    </style>
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+    </script>
+</head>
+<body>
+    <div id="loader"><div class="spinner"></div><div class="load-text">載入圖資...</div></div>
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <!-- 左側資訊卡 -->
+        <div id="info-card">
+            <div class="card-head" id="drag-head-info">
+                <div><div class="c-name" id="d-zh">--</div><div class="c-en" id="d-en">--</div></div>
+                <div class="close-btn" onpointerdown="event.stopPropagation()" onclick="closeInfo()" title="關閉">×</div>
+            </div>
+            <div class="card-body">
+                <div class="row"><span class="lbl">首都 Capital</span><span class="val" id="d-cap">--</span></div>
+                <div class="row"><span class="lbl">時間 Time</span><span class="val" id="d-time">--</span></div>
+                <div class="row"><span class="lbl">氣候 Climate</span><span class="val" id="d-cli">--</span></div>
+                <div class="row"><span class="lbl">貨幣 Currency</span><span class="val" id="d-cur">--</span></div>
+                <!-- 溫度顯示 -->
+                <div class="row"><span class="lbl">溫度 Temperature</span><span class="val" id="d-main-temp">--</span></div>
+            </div>
+        </div>
+
+        <!-- 右側列表 -->
+        <div id="list-container">
+            <button id="list-toggle-btn">
+                <span id="toggle-icon">▼</span> 國家列表 (100+)
+            </button>
+            <div id="list-panel">
+                <div class="list-header">
+                    <input type="text" id="search-input" placeholder="搜尋國家..." onkeyup="filterList(this.value)">
+                </div>
+                <div class="list-content" id="country-list"></div>
+            </div>
+        </div>
+
+        <button class="btn-reset" onclick="resetView()">🔄 重置視角</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 資料庫 ---
+        const db = [
+            {z:"台灣", e:"Taiwan", c:"台北", lat:23.69, lon:120.96, tz:8, w:"副熱帶", m:"TWD"},
+            {z:"杜拜", e:"Dubai", c:"-", lat:25.20, lon:55.27, tz:4, w:"沙漠氣候", m:"AED"},
+            {z:"北極", e:"North Pole", c:"-", lat:89.9, lon:0.00, tz:0, w:"極地冰原", m:"-"},
+            {z:"南極", e:"South Pole", c:"-", lat:-89.9, lon:0.00, tz:12, w:"極地冰原", m:"-"},
+            {z:"日本", e:"Japan", c:"東京", lat:36.20, lon:138.25, tz:9, w:"溫帶", m:"JPY"},
+            {z:"韓國", e:"South Korea", c:"首爾", lat:35.90, lon:127.76, tz:9, w:"溫帶", m:"KRW"},
+            {z:"中國", e:"China", c:"北京", lat:35.86, lon:104.19, tz:8, w:"多樣", m:"CNY"},
+            {z:"美國", e:"United States", c:"華盛頓", lat:37.09, lon:-95.71, tz:-5, w:"多樣", m:"USD"},
+            {z:"英國", e:"United Kingdom", c:"倫敦", lat:55.37, lon:-3.43, tz:0, w:"海洋性", m:"GBP"},
+            {z:"法國", e:"France", c:"巴黎", lat:46.22, lon:2.21, tz:1, w:"海洋性", m:"EUR"},
+            {z:"德國", e:"Germany", c:"柏林", lat:51.16, lon:10.45, tz:1, w:"大陸性", m:"EUR"},
+            {z:"俄羅斯", e:"Russia", c:"莫斯科", lat:61.52, lon:105.31, tz:3, w:"大陸性", m:"RUB"},
+            {z:"澳洲", e:"Australia", c:"坎培拉", lat:-25.27, lon:133.77, tz:11, w:"乾燥", m:"AUD"},
+            {z:"巴西", e:"Brazil", c:"巴西利亞", lat:-14.23, lon:-51.92, tz:-3, w:"雨林", m:"BRL"},
+            {z:"加拿大", e:"Canada", c:"渥太華", lat:56.13, lon:-106.34, tz:-5, w:"寒帶", m:"CAD"},
+            {z:"印度", e:"India", c:"新德里", lat:20.59, lon:78.96, tz:5.5, w:"季風", m:"INR"},
+            {z:"義大利", e:"Italy", c:"羅馬", lat:41.87, lon:12.56, tz:1, w:"地中海", m:"EUR"},
+            {z:"西班牙", e:"Spain", c:"馬德里", lat:40.46, lon:-3.74, tz:1, w:"地中海", m:"EUR"},
+            {z:"阿根廷", e:"Argentina", c:"布宜諾斯", lat:-38.41, lon:-63.61, tz:-3, w:"溫帶", m:"ARS"},
+            {z:"南非", e:"South Africa", c:"普勒托利亞", lat:-30.55, lon:22.93, tz:2, w:"亞熱帶", m:"ZAR"},
+            {z:"埃及", e:"Egypt", c:"開羅", lat:26.82, lon:30.80, tz:2, w:"沙漠", m:"EGP"},
+            {z:"泰國", e:"Thailand", c:"曼谷", lat:15.87, lon:100.99, tz:7, w:"熱帶", m:"THB"},
+            {z:"越南", e:"Vietnam", c:"河內", lat:14.05, lon:108.27, tz:7, w:"熱帶", m:"VND"},
+            {z:"印尼", e:"Indonesia", c:"雅加達", lat:-0.78, lon:113.92, tz:7, w:"雨林", m:"IDR"},
+            {z:"馬來西亞", e:"Malaysia", c:"吉隆坡", lat:4.21, lon:101.97, tz:8, w:"雨林", m:"MYR"},
+            {z:"新加坡", e:"Singapore", c:"新加坡", lat:1.35, lon:103.81, tz:8, w:"雨林", m:"SGD"},
+            {z:"菲律賓", e:"Philippines", c:"馬尼拉", lat:12.87, lon:121.77, tz:8, w:"季風", m:"PHP"},
+            {z:"土耳其", e:"Turkey", c:"安卡拉", lat:38.96, lon:35.24, tz:3, w:"地中海", m:"TRY"},
+            {z:"沙烏地", e:"Saudi Arabia", c:"利雅德", lat:23.88, lon:45.07, tz:3, w:"沙漠", m:"SAR"},
+            {z:"瑞典", e:"Sweden", c:"斯德哥爾摩", lat:60.12, lon:18.64, tz:1, w:"寒帶", m:"SEK"},
+            {z:"荷蘭", e:"Netherlands", c:"阿姆斯特丹", lat:52.13, lon:5.29, tz:1, w:"海洋性", m:"EUR"},
+            {z:"瑞士", e:"Switzerland", c:"伯恩", lat:46.81, lon:8.22, tz:1, w:"高山", m:"CHF"},
+            {z:"挪威", e:"Norway", c:"奧斯陸", lat:60.47, lon:8.46, tz:1, w:"寒帶", m:"NOK"},
+            {z:"芬蘭", e:"Finland", c:"赫爾辛基", lat:61.92, lon:25.74, tz:2, w:"寒帶", m:"EUR"},
+            {z:"波蘭", e:"Poland", c:"華沙", lat:51.91, lon:19.14, tz:1, w:"大陸性", m:"PLN"},
+            {z:"烏克蘭", e:"Ukraine", c:"基輔", lat:48.37, lon:31.16, tz:2, w:"大陸性", m:"UAH"},
+            {z:"希臘", e:"Greece", c:"雅典", lat:39.07, lon:21.82, tz:2, w:"地中海", m:"EUR"},
+            {z:"葡萄牙", e:"Portugal", c:"里斯本", lat:39.39, lon:-8.22, tz:0, w:"地中海", m:"EUR"},
+            {z:"奧地利", e:"Austria", c:"維也納", lat:47.51, lon:14.55, tz:1, w:"大陸性", m:"EUR"},
+            {z:"紐西蘭", e:"New Zealand", c:"威靈頓", lat:-40.90, lon:174.88, tz:12, w:"海洋性", m:"NZD"},
+            {z:"智利", e:"Chile", c:"聖地亞哥", lat:-35.67, lon:-71.54, tz:-4, w:"地中海", m:"CLP"},
+            {z:"哥倫比亞", e:"Colombia", c:"波哥大", lat:4.57, lon:-74.29, tz:-5, w:"熱帶", m:"COP"},
+            {z:"秘魯", e:"Peru", c:"利馬", lat:-9.18, lon:-75.01, tz:-5, w:"沙漠", m:"PEN"},
+            {z:"肯亞", e:"Kenya", c:"奈洛比", lat:-0.02, lon:37.90, tz:3, w:"高原", m:"KES"},
+            {z:"奈及利亞", e:"Nigeria", c:"阿布賈", lat:9.08, lon:8.67, tz:1, w:"熱帶", m:"NGN"},
+            {z:"以色列", e:"Israel", c:"耶路撒冷", lat:31.04, lon:34.85, tz:2, w:"地中海", m:"ILS"},
+            {z:"哈薩克", e:"Kazakhstan", c:"阿斯塔納", lat:48.01, lon:66.92, tz:6, w:"大陸性", m:"KZT"},
+            {z:"愛爾蘭", e:"Ireland", c:"都柏林", lat:53.41, lon:-8.24, tz:0, w:"海洋性", m:"EUR"},
+            {z:"冰島", e:"Iceland", c:"雷克雅維克", lat:64.96, lon:-19.02, tz:0, w:"寒帶", m:"ISK"},
+            {z:"捷克", e:"Czech", c:"布拉格", lat:49.81, lon:15.47, tz:1, w:"大陸性", m:"CZK"},
+            {z:"匈牙利", e:"Hungary", c:"布達佩斯", lat:47.16, lon:19.50, tz:1, w:"大陸性", m:"HUF"},
+            {z:"丹麥", e:"Denmark", c:"哥本哈根", lat:56.26, lon:9.50, tz:1, w:"海洋性", m:"DKK"},
+            {z:"阿聯酋", e:"UAE", c:"阿布達比", lat:23.42, lon:53.84, tz:4, w:"沙漠", m:"AED"},
+            {z:"伊朗", e:"Iran", c:"德黑蘭", lat:32.42, lon:53.68, tz:3.5, w:"乾燥", m:"IRR"},
+            {z:"巴基斯坦", e:"Pakistan", c:"伊斯蘭瑪巴德", lat:30.37, lon:69.34, tz:5, w:"熱帶", m:"PKR"},
+            {z:"孟加拉", e:"Bangladesh", c:"達卡", lat:23.68, lon:90.35, tz:6, w:"季風", m:"BDT"},
+            {z:"柬埔寨", e:"Cambodia", c:"金邊", lat:12.56, lon:104.99, tz:7, w:"熱帶", m:"KHR"},
+            {z:"斯里蘭卡", e:"Sri Lanka", c:"可倫坡", lat:7.87, lon:80.77, tz:5.5, w:"熱帶", m:"LKR"},
+            {z:"摩洛哥", e:"Morocco", c:"拉巴特", lat:31.79, lon:-7.09, tz:1, w:"地中海", m:"MAD"},
+            {z:"比利時", e:"Belgium", c:"布魯塞爾", lat:50.85, lon:4.35, tz:1, w:"海洋性", m:"EUR"},
+            {z:"蒙古", e:"Mongolia", c:"烏蘭巴托", lat:46.86, lon:103.84, tz:8, w:"大陸性", m:"MNT"},
+            {z:"北韓", e:"North Korea", c:"平壤", lat:40.33, lon:127.51, tz:9, w:"大陸性", m:"KPW"},
+            {z:"委內瑞拉", e:"Venezuela", c:"卡拉卡斯", lat:6.42, lon:-66.58, tz:-4, w:"熱帶", m:"VES"},
+            {z:"古巴", e:"Cuba", c:"哈瓦那", lat:21.52, lon:-77.78, tz:-5, w:"熱帶", m:"CUP"},
+            {z:"牙買加", e:"Jamaica", c:"京斯敦", lat:18.10, lon:-77.29, tz:-5, w:"熱帶", m:"JMD"},
+            {z:"尼泊爾", e:"Nepal", c:"加德滿都", lat:28.39, lon:84.12, tz:5.75, w:"高山", m:"NPR"},
+            {z:"馬達加斯加", e:"Madagascar", c:"安塔那那利佛", lat:-18.76, lon:46.86, tz:3, w:"熱帶", m:"MGA"}
+        ];
+
+        // --- 設定 ---
+        const TEX_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@master/examples/textures/planets/earth_atmos_2048.jpg";
+        const BUMP_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@master/examples/textures/planets/earth_normal_2048.jpg";
+        const SPEC_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@master/examples/textures/planets/earth_specular_2048.jpg";
+
+        let scene, camera, renderer, controls;
+        let earthGroup; 
+        let pinMeshes = [], pinObjects = [];
+        let raycaster, mouse;
+        let targetRotation = { x: 0, y: 0 };
+        let isAutoRotating = true, isAnimating = false;
+        let isListOpen = true; 
+        let currentSelectedIdx = -1;
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020205);
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 32);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambient);
+            const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+            sun.position.set(20, 10, 20);
+            scene.add(sun);
+            const rim = new THREE.SpotLight(0x4facfe, 3);
+            rim.position.set(-30, 10, -20);
+            scene.add(rim);
+
+            loadEarth();
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 15;
+            controls.maxDistance = 50;
+            controls.enablePan = false;
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            
+            container.addEventListener('pointerdown', onPointerDown);
+            container.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('resize', onResize);
+
+            renderList(db);
+            
+            enableDrag(document.getElementById('info-card'), document.getElementById('drag-head-info'));
+            enableDrag(document.getElementById('list-container'), document.getElementById('list-toggle-btn'));
+
+            animate();
+
+            window.closeInfo = closeInfo;
+            window.resetView = resetView;
+            window.filterList = filterList;
+            window.toggleList = toggleList;
+        }
+
+        // --- 拖曳邏輯 (修復版) ---
+        function enableDrag(el, handle) {
+            let startX, startY, initialLeft, initialTop;
+            let isDragging = false;
+
+            handle.onpointerdown = function(e) {
+                e.preventDefault();
+                handle.setPointerCapture(e.pointerId);
+                
+                startX = e.clientX;
+                startY = e.clientY;
+                
+                // 強制將 right/bottom 轉換為 left/top 絕對定位
+                const rect = el.getBoundingClientRect();
+                el.style.right = 'auto';
+                el.style.bottom = 'auto';
+                el.style.left = rect.left + 'px';
+                el.style.top = rect.top + 'px';
+                
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                isDragging = false; 
+
+                handle.onpointermove = function(e) {
+                    const dx = e.clientX - startX;
+                    const dy = e.clientY - startY;
+                    if (!isDragging && Math.hypot(dx, dy) > 5) isDragging = true;
+                    if (isDragging) {
+                        el.style.left = (initialLeft + dx) + 'px';
+                        el.style.top = (initialTop + dy) + 'px';
+                    }
+                };
+
+                handle.onpointerup = function(e) {
+                    handle.releasePointerCapture(e.pointerId);
+                    handle.onpointermove = null;
+                    handle.onpointerup = null;
+                    // 如果沒有拖曳，且是列表按鈕，則執行 Toggle
+                    if (!isDragging && handle.id === 'list-toggle-btn') toggleList();
+                };
+            };
+        }
+
+        async function fetchTemp(lat, lon) {
+            try {
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&timezone=auto`;
+                const res = await fetch(url);
+                const json = await res.json();
+                return Math.round(json.current.temperature_2m) + "°C";
+            } catch(e) { return "--"; }
+        }
+
+        // --- 渲染列表 (只顯示名稱) ---
+        function renderList(listData) {
+            const el = document.getElementById('country-list');
+            el.innerHTML = '';
+            listData.forEach((d) => {
+                const idx = db.indexOf(d);
+                const item = document.createElement('div');
+                item.className = 'list-item';
+                item.id = `li-${idx}`;
+                item.innerHTML = `<span class="li-zh">${d.z}</span><span class="li-en">${d.e}</span>`;
+                item.onclick = (e) => { e.stopPropagation(); selectCountry(idx); };
+                el.appendChild(item);
+            });
+        }
+
+        function loadEarth() {
+            earthGroup = new THREE.Group();
+            scene.add(earthGroup);
+            const loader = new THREE.TextureLoader();
+            loader.load(TEX_URL, (map) => {
+                loader.load(BUMP_URL, (bump) => {
+                    loader.load(SPEC_URL, (spec) => {
+                        createEarthMesh(map, bump, spec);
+                    }, () => createEarthMesh(map, bump, null));
+                }, () => createEarthMesh(map, null, null));
+            }, undefined, () => createEarthMesh(generateTexture(), null, null));
+        }
+
+        function createEarthMesh(map, bump, spec) {
+            const geo = new THREE.SphereGeometry(10, 64, 64);
+            const mat = new THREE.MeshPhongMaterial({
+                map: map, bumpMap: bump, bumpScale: 0.15,
+                specularMap: spec, specular: new THREE.Color(0x333333), shininess: 10
+            });
+            const earth = new THREE.Mesh(geo, mat);
+            earthGroup.add(earth);
+            
+            const atm = new THREE.Mesh(
+                new THREE.SphereGeometry(10.2, 64, 64),
+                new THREE.MeshPhongMaterial({ color: 0x00aaff, transparent: true, opacity: 0.1, side: THREE.BackSide })
+            );
+            earthGroup.add(atm);
+
+            createPins();
+            document.getElementById('loader').style.display='none';
+        }
+
+        function generateTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#001e4d'; ctx.fillRect(0,0,1024,512);
+            ctx.fillStyle = '#2e5e30'; 
+            for(let i=0; i<40; i++) {
+                const x = Math.random()*1024, y = Math.random()*512, r = Math.random()*60+20;
+                ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+            }
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createPins() {
+            const stickGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.8, 8);
+            stickGeo.translate(0, 0.4, 0); stickGeo.rotateX(Math.PI/2);   
+            const stickMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const headGeo = new THREE.SphereGeometry(0.18, 16, 16);
+            headGeo.translate(0, 0, 0.8);
+            const headMat = new THREE.MeshBasicMaterial({ color: 0xe74c3c });
+            const hitGeo = new THREE.SphereGeometry(0.5, 8, 8);
+            const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+
+            db.forEach((d, idx) => {
+                const pinGroup = new THREE.Group();
+                const phi = (90 - d.lat) * (Math.PI / 180);
+                const theta = (d.lon + 180) * (Math.PI / 180);
+                const r = 10.0; 
+                const x = -(r * Math.sin(phi) * Math.cos(theta));
+                const z = (r * Math.sin(phi) * Math.sin(theta));
+                const y = (r * Math.cos(phi));
+
+                pinGroup.position.set(x, y, z);
+                pinGroup.lookAt(x*2, y*2, z*2);
+
+                const stick = new THREE.Mesh(stickGeo, stickMat.clone());
+                const head = new THREE.Mesh(headGeo, headMat.clone());
+                const hitBox = new THREE.Mesh(hitGeo, hitMat);
+                hitBox.position.z = 0.5;
+                hitBox.userData = { id: idx };
+
+                pinGroup.add(stick); pinGroup.add(head); pinGroup.add(hitBox);
+                pinGroup.userData.stick = stick;
+                pinGroup.userData.head = head;
+
+                earthGroup.add(pinGroup);
+                pinMeshes.push(hitBox);
+                pinObjects.push(pinGroup);
+            });
+        }
+
+        function onPointerDown(e) {
+            isAutoRotating = false;
+            if(e.target.closest('#info-card') || e.target.closest('#list-container') || e.target.closest('.btn-reset')) return;
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObjects(pinMeshes);
+            if (hits.length > 0) selectCountry(hits[0].object.userData.id);
+        }
+
+        function onPointerMove(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObjects(pinMeshes);
+            document.body.style.cursor = hits.length > 0 ? 'pointer' : 'default';
+        }
+
+        function selectCountry(idx) {
+            toggleList(false); // 收起列表
+            const data = db[idx];
+            updateCard(data);
+            highlightList(idx);
+            
+            pinObjects.forEach(g => {
+                g.scale.set(1, 1, 1);
+                g.userData.head.material.color.setHex(0xe74c3c);
+                g.userData.stick.material.color.setHex(0xffffff);
+            });
+            if(pinObjects[idx]) {
+                const g = pinObjects[idx];
+                g.scale.set(1.8, 1.8, 1.8);
+                g.userData.head.material.color.setHex(0x00aaff);
+                g.userData.stick.material.color.setHex(0x00aaff);
+            }
+            currentSelectedIdx = idx;
+
+            const targetY = -data.lon * (Math.PI/180) - Math.PI/2;
+            const targetX = data.lat * (Math.PI/180) * 0.4;
+            const currentY = earthGroup.rotation.y % (Math.PI*2);
+            let diff = targetY - currentY;
+            if (diff > Math.PI) diff -= Math.PI*2;
+            if (diff < -Math.PI) diff += Math.PI*2;
+            
+            targetRotation.y = earthGroup.rotation.y + diff;
+            targetRotation.x = targetX;
+            isAnimating = true;
+            isAutoRotating = false;
+        }
+
+        async function updateCard(d) {
+            document.getElementById('d-zh').innerText = d.z;
+            document.getElementById('d-en').innerText = d.e;
+            document.getElementById('d-cap').innerText = d.c;
+            document.getElementById('d-cli').innerText = d.w;
+            document.getElementById('d-cur').innerText = d.m;
+            // 溫度顯示
+            const tempEl = document.getElementById('d-main-temp');
+            tempEl.innerText = "Loading...";
+            const temp = await fetchTemp(d.lat, d.lon);
+            tempEl.innerText = temp;
+            const val = parseInt(temp);
+            if(val >= 30) tempEl.style.color = '#ff4444';
+            else if(val <= 10) tempEl.style.color = '#44ccff';
+            else tempEl.style.color = '#ffcc00';
+
+            const now = new Date();
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            const t = new Date(utc + (3600000 * d.tz));
+            const h = t.getHours().toString().padStart(2,'0');
+            const m = t.getMinutes().toString().padStart(2,'0');
+            document.getElementById('d-time').innerText = `${h}:${m} (GMT${d.tz>=0?'+':''}${d.tz})`;
+            document.getElementById('info-card').classList.add('active');
+        }
+
+        function closeInfo() {
+            document.getElementById('info-card').classList.remove('active');
+            isAutoRotating = true;
+            document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
+            if(currentSelectedIdx !== -1 && pinObjects[currentSelectedIdx]) {
+                const g = pinObjects[currentSelectedIdx];
+                g.scale.set(1, 1, 1);
+                g.userData.head.material.color.setHex(0xe74c3c);
+                g.userData.stick.material.color.setHex(0xffffff);
+                currentSelectedIdx = -1;
+            }
+        }
+
+        function filterList(v) {
+            const val = v.toLowerCase();
+            renderList(db.filter(d => d.z.includes(val) || d.e.toLowerCase().includes(val)));
+        }
+
+        function highlightList(idx) {
+            document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
+            const target = document.getElementById(`li-${idx}`);
+            if(target) {
+                target.classList.add('active');
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        function toggleList(force) {
+            const panel = document.getElementById('list-panel');
+            const icon = document.getElementById('toggle-icon');
+            if (typeof force === 'boolean') isListOpen = force;
+            else isListOpen = !isListOpen;
+
+            if (isListOpen) {
+                panel.classList.remove('minimized');
+                icon.innerText = '▼';
+                closeInfo(); 
+            } else {
+                panel.classList.add('minimized');
+                icon.innerText = '▲';
+            }
+        }
+
+        function resetView() {
+            closeInfo();
+            toggleList(false);
+            targetRotation.x = 0; targetRotation.y = 0;
+            const startX = earthGroup.rotation.x;
+            const startY = earthGroup.rotation.y;
+            const start = performance.now();
+            function loop() {
+                const p = Math.min((performance.now()-start)/1000, 1);
+                const e = 1 - Math.pow(1-p, 3);
+                earthGroup.rotation.x = startX + (0-startX)*e;
+                earthGroup.rotation.y = startY + (0-startY)*e;
+                if(p<1) requestAnimationFrame(loop);
+            }
+            loop();
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            if (earthGroup) {
+                if (isAutoRotating) earthGroup.rotation.y += 0.0008;
+                if (isAnimating) {
+                    earthGroup.rotation.y += (targetRotation.y - earthGroup.rotation.y) * 0.08;
+                    earthGroup.rotation.x += (targetRotation.x - earthGroup.rotation.x) * 0.08;
+                    if(Math.abs(earthGroup.rotation.y - targetRotation.y) < 0.001) isAnimating = false;
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
